@@ -33,13 +33,13 @@ func main() {
 	}
 	defer etcdCli.Close()
 
-	service := etcd.RulesetService{
-		Client:    etcdCli,
-		Namespace: cfg.Etcd.Namespace,
-		Logger:    logger.With().Str("service", "etcd").Logger(),
-	}
+	service := etcd.NewRulesetService(
+		etcdCli,
+		cfg.Etcd.Namespace,
+		logger.With().Str("service", "etcd").Logger(),
+	)
 
-	srv := server.New(&service, server.Config{
+	srv := server.New(service, server.Config{
 		Logger:       &logger,
 		Timeout:      cfg.Server.Timeout,
 		WatchTimeout: cfg.Server.WatchTimeout,

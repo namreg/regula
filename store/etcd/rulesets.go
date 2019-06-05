@@ -9,6 +9,7 @@ import (
 	"path"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
@@ -26,6 +27,18 @@ type RulesetService struct {
 	Client    *clientv3.Client
 	Logger    zerolog.Logger
 	Namespace string
+	// we need rate limiter because ksuid doesn't guarantee the order within the same second
+	KSUIDLimiter *time.Ticker
+}
+
+// NewRulesetService creates a new RulesetService.
+func NewRulesetService(client *clientv3.Client, namespace string, logger zerolog.Logger) *RulesetService {
+	return &RulesetService{
+		Client:       client,
+		Logger:       logger,
+		Namespace:    namespace,
+		KSUIDLimiter: time.NewTicker(1 * time.Second),
+	}
 }
 
 // List returns all the rulesets entries under the given prefix.
@@ -209,6 +222,7 @@ func (s *RulesetService) Put(ctx context.Context, path string, ruleset *regula.R
 		stm.Put(s.checksumsPath(path), checksum)
 
 		// create a new ruleset version
+		<-s.KSUIDLimiter.C
 		k, err := ksuid.NewRandom()
 		if err != nil {
 			return errors.Wrap(err, "failed to generate ruleset version")

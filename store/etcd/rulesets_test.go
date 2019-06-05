@@ -15,6 +15,7 @@ import (
 	"github.com/heetch/regula/rule"
 	"github.com/heetch/regula/store"
 	"github.com/heetch/regula/store/etcd"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +33,7 @@ func Init() {
 	rand.Seed(time.Now().Unix())
 }
 
-func newEtcdRulesetService(t *testing.T) (*etcd.RulesetService, func()) {
+func newEtcdRulesetService(t *testing.T, ksuidLimiter *time.Ticker) (*etcd.RulesetService, func()) {
 	t.Helper()
 
 	cli, err := clientv3.New(clientv3.Config{
@@ -41,15 +42,25 @@ func newEtcdRulesetService(t *testing.T) (*etcd.RulesetService, func()) {
 	})
 	require.NoError(t, err)
 
-	s := etcd.RulesetService{
-		Client:    cli,
-		Namespace: fmt.Sprintf("regula-store-tests-%d/", rand.Int()),
+	s := etcd.NewRulesetService(
+		cli,
+		fmt.Sprintf("regula-store-tests-%d/", rand.Int()),
+		zerolog.Nop(),
+	)
+
+	if ksuidLimiter != nil {
+		s.KSUIDLimiter = ksuidLimiter
 	}
 
-	return &s, func() {
+	return s, func() {
 		cli.Delete(context.Background(), s.Namespace, clientv3.WithPrefix())
 		cli.Close()
+		s.KSUIDLimiter.Stop()
 	}
+}
+
+func NewKSUIDFastLimiter() *time.Ticker {
+	return time.NewTicker(1 * time.Millisecond)
 }
 
 func createRuleset(t *testing.T, s *etcd.RulesetService, path string, r *regula.Ruleset) *store.RulesetEntry {
@@ -63,7 +74,7 @@ func createRuleset(t *testing.T, s *etcd.RulesetService, path string, r *regula.
 func TestList(t *testing.T) {
 	t.Parallel()
 
-	s, cleanup := newEtcdRulesetService(t)
+	s, cleanup := newEtcdRulesetService(t, NewKSUIDFastLimiter())
 	defer cleanup()
 
 	rs, _ := regula.NewBoolRuleset(rule.New(rule.True(), rule.BoolValue(true)))
@@ -156,7 +167,7 @@ func TestList(t *testing.T) {
 func TestLatest(t *testing.T) {
 	t.Parallel()
 
-	s, cleanup := newEtcdRulesetService(t)
+	s, cleanup := newEtcdRulesetService(t, nil)
 	defer cleanup()
 
 	oldRse, _ := regula.NewStringRuleset(
@@ -174,8 +185,6 @@ func TestLatest(t *testing.T) {
 	)
 
 	createRuleset(t, s, "a", oldRse)
-	// sleep 1 second because ksuid doesn't guarantee the order within the same second since it's based on a 32 bits timestamp (second).
-	time.Sleep(time.Second)
 	createRuleset(t, s, "a", newRse)
 
 	rs, _ := regula.NewBoolRuleset(rule.New(rule.True(), rule.BoolValue(true)))
@@ -240,7 +249,7 @@ func TestLatest(t *testing.T) {
 func TestOneByVersion(t *testing.T) {
 	t.Parallel()
 
-	s, cleanup := newEtcdRulesetService(t)
+	s, cleanup := newEtcdRulesetService(t, NewKSUIDFastLimiter())
 	defer cleanup()
 
 	oldRse, _ := regula.NewStringRuleset(
@@ -294,7 +303,7 @@ func TestOneByVersion(t *testing.T) {
 func TestPut(t *testing.T) {
 	t.Parallel()
 
-	s, cleanup := newEtcdRulesetService(t)
+	s, cleanup := newEtcdRulesetService(t, NewKSUIDFastLimiter())
 	defer cleanup()
 
 	t.Run("OK", func(t *testing.T) {
@@ -464,7 +473,7 @@ func TestPut(t *testing.T) {
 func TestWatch(t *testing.T) {
 	t.Parallel()
 
-	s, cleanup := newEtcdRulesetService(t)
+	s, cleanup := newEtcdRulesetService(t, NewKSUIDFastLimiter())
 	defer cleanup()
 
 	var wg sync.WaitGroup
@@ -507,7 +516,7 @@ func TestWatch(t *testing.T) {
 func TestEval(t *testing.T) {
 	t.Parallel()
 
-	s, cleanup := newEtcdRulesetService(t)
+	s, cleanup := newEtcdRulesetService(t, NewKSUIDFastLimiter())
 	defer cleanup()
 
 	rs, _ := regula.NewBoolRuleset(
@@ -542,7 +551,7 @@ func TestEval(t *testing.T) {
 func TestEvalVersion(t *testing.T) {
 	t.Parallel()
 
-	s, cleanup := newEtcdRulesetService(t)
+	s, cleanup := newEtcdRulesetService(t, NewKSUIDFastLimiter())
 	defer cleanup()
 
 	rs, _ := regula.NewBoolRuleset(
